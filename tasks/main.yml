@@ -1,0 +1,234 @@
+---
+# tasks file for ansible-role-wordpress
+
+- name: Set kubeconfig variable
+  ansible.builtin.set_fact:
+    kubeconfig: "{{ hostvars[groups['k8s_master'][0]]['kubeconfig'] }}"
+  changed_when: false
+
+- name: Setting WordPress namespace to "{{ state }}"
+  kubernetes.core.k8s:
+    kubeconfig: "{{ kubeconfig }}"
+    state: "{{ state }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: wordpress
+
+- name: Setting WordPress service to "{{ state }}"
+  kubernetes.core.k8s:
+    state: "{{ state }}"
+    kubeconfig: "{{ kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: wordpress
+        labels:
+          app: wordpress
+        namespace: wordpress
+      spec:
+        ports:
+          - port: 80
+        selector:
+          app: wordpress
+          tier: frontend
+        type: LoadBalancer # Change this to NodePort if there is no loadbalancer
+
+- name: Setting WordPress deployment to "{{ state }}"
+  kubernetes.core.k8s:
+    state: "{{ state }}"
+    kubeconfig: "{{ kubeconfig }}"
+    definition:
+      apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+      kind: Deployment
+      metadata:
+        name: wordpress
+        labels:
+          app: wordpress
+        namespace: wordpress
+      spec:
+        selector:
+          matchLabels:
+            app: wordpress
+            tier: frontend
+        strategy:
+          type: Recreate
+        template:
+          metadata:
+            labels:
+              app: wordpress
+              tier: frontend
+          spec:
+            containers:
+              - image: "{{ wordpress_image }}"
+                name: wordpress
+                env:
+                  - name: WORDPRESS_DB_HOST
+                    value: wordpress-mysql
+                  - name: WORDPRESS_DB_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: mysql-pass
+                        key: password
+                resources:  # The resources key values are optional - included for demonstration purposes
+                  requests:
+                    cpu: "500m"
+                    memory: "256Mi"
+                  limits:
+                    cpu: "2000m"
+                    memory: "2000Mi"
+                ports:
+                  - containerPort: 80
+                    name: wordpress
+                volumeMounts:
+                  - name: wordpress-persistent-storage
+                    mountPath: /var/www/html
+            volumes:
+              - name: wordpress-persistent-storage
+                persistentVolumeClaim:
+                  claimName: wp-pv-claim
+
+- name: Setting WordPress PVC to "{{ state }}"
+  kubernetes.core.k8s:
+    state: "{{ state }}"
+    kubeconfig: "{{ kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: wp-pv-claim
+        labels:
+          app: wordpress
+        namespace: wordpress
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 25Gi
+        storageClassName: '{{ storage_class | default("nebulon") }}' # Added for the nebulon CSI driver
+
+- name: Setting MySQL service to "{{ state }}"
+  kubernetes.core.k8s:
+    state: "{{ state }}"
+    kubeconfig: "{{ kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: wordpress-mysql
+        labels:
+          app: wordpress
+        namespace: wordpress
+      spec:
+        ports:
+          - port: 3306
+        selector:
+          app: wordpress
+          tier: mysql
+        clusterIP: None
+
+- name: Setting MySQL secret to "{{ state }}"
+  kubernetes.core.k8s:
+    state: "{{ state }}"
+    kubeconfig: "{{ kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: mysql-pass
+        namespace: wordpress
+      type: Opaque
+      data:
+        password: Q2hhbmdlTTMh
+  tags: namespace
+
+- name: Setting MySQL deployment to "{{ state }}"
+  kubernetes.core.k8s:
+    state: "{{ state }}"
+    kubeconfig: "{{ kubeconfig }}"
+    definition:
+      apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+      kind: Deployment
+      metadata:
+        name: wordpress-mysql
+        labels:
+          app: wordpress
+        namespace: wordpress
+      spec:
+        selector:
+          matchLabels:
+            app: wordpress
+            tier: mysql
+        strategy:
+          type: Recreate
+        template:
+          metadata:
+            labels:
+              app: wordpress
+              tier: mysql
+          spec:
+            containers:
+              - image: "{{ mysql_image }}"
+              # - image: mysql:8.0.28
+                name: mysql
+                env:
+                  - name: MYSQL_ROOT_PASSWORD
+                    valueFrom:
+                      secretKeyRef:
+                        name: mysql-pass
+                        key: password
+                resources:
+                  requests:
+                    cpu: "1000m"
+                    memory: "500Mi"
+                  limits:
+                    cpu: "2000m"
+                    memory: "2000Mi"
+                ports:
+                  - containerPort: 3306
+                    name: mysql
+                volumeMounts:
+                  - name: mysql-persistent-storage
+                    mountPath: /var/lib/mysql
+            volumes:
+              - name: mysql-persistent-storage
+                persistentVolumeClaim:
+                  claimName: mysql-pv-claim
+
+- name: Setting MySQL PVC to "{{ state }}"
+  kubernetes.core.k8s:
+    state: "{{ state }}"
+    kubeconfig: "{{ kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: mysql-pv-claim
+        labels:
+          app: wordpress
+        namespace: wordpress
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 20Gi
+        storageClassName: '{{ storage_class | default("nebulon") }}' # Added for the nebulon CSI driver
+
+- name: Retrieving IP addresses for WordPress site
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kubeconfig }}"
+    kind: svc
+    namespace: wordpress
+  register: wordpress_info
+  when: state == 'present'
+  tags: kubeconfig
+
+# - name: Print out wordpress info
+#   ansible.builtin.debug:
+#     msg: "WordPress IP addresses is: {{ wordpress_info | json_query('resources[*].status.loadBalancer.ingress[*].ip') }}"
+#   when: state == 'present'
+#   tags: kubeconfig

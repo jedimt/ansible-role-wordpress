@@ -1,0 +1,11 @@
+---
+# defaults file for ansible-role-wordpress
+state: present
+
+# These versions are old, but newer versions have "Error establishing a database connection"
+# Would need to investigate what needs to change to fix that with WP 5.x and MySQL 8.x
+wordpress_image: wordpress:4.8-apache
+mysql_image: mysql:5.6
+
+# Storage class for persistent volumes
+storage_class: "nebulon"
