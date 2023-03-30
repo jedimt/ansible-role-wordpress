@@ -49,6 +49,7 @@
           app: wordpress
         namespace: wordpress
       spec:
+        replicas: 1
         selector:
           matchLabels:
             app: wordpress
@@ -67,11 +68,12 @@
                 env:
                   - name: WORDPRESS_DB_HOST
                     value: wordpress-mysql
+                  - name: WORDPRESS_DB_NAME
+                    value: wordpress
+                  - name: WORDPRESS_DB_USER
+                    value: root
                   - name: WORDPRESS_DB_PASSWORD
-                    valueFrom:
-                      secretKeyRef:
-                        name: mysql-pass
-                        key: password
+                    value: "{{ vault_k8s_secret_password }}"
                 resources:  # The resources key values are optional - included for demonstration purposes
                   requests:
                     cpu: "500m"
@@ -120,30 +122,13 @@
       metadata:
         name: wordpress-mysql
         labels:
-          app: wordpress
+          app: wordpress-mysql
         namespace: wordpress
       spec:
         ports:
           - port: 3306
         selector:
-          app: wordpress
-          tier: mysql
-        clusterIP: None
-
-- name: Setting MySQL secret to "{{ state }}"
-  kubernetes.core.k8s:
-    state: "{{ state }}"
-    kubeconfig: "{{ kubeconfig }}"
-    definition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: mysql-pass
-        namespace: wordpress
-      type: Opaque
-      data:
-        password: Q2hhbmdlTTMh
-  tags: namespace
+          app: wordpress-mysql
 
 - name: Setting MySQL deployment to "{{ state }}"
   kubernetes.core.k8s:
@@ -155,31 +140,27 @@
       metadata:
         name: wordpress-mysql
         labels:
-          app: wordpress
+          app: wordpress-mysql
         namespace: wordpress
       spec:
         selector:
           matchLabels:
-            app: wordpress
-            tier: mysql
+            app: wordpress-mysql
         strategy:
           type: Recreate
         template:
           metadata:
             labels:
-              app: wordpress
-              tier: mysql
+              app: wordpress-mysql
           spec:
             containers:
               - image: "{{ mysql_image }}"
-              # - image: mysql:8.0.28
                 name: mysql
                 env:
+                  - name: MYSQL_DATABASE
+                    value: wordpress
                   - name: MYSQL_ROOT_PASSWORD
-                    valueFrom:
-                      secretKeyRef:
-                        name: mysql-pass
-                        key: password
+                    value: "{{ vault_k8s_secret_password }}"
                 resources:
                   requests:
                     cpu: "1000m"
