@@ -54,7 +54,7 @@ Example Playbook
       connection: local
 
       roles:
-        - { role: ansible-role-wordpress }
+        - { role: jedimt.wordpress }
 
 License
 -------
